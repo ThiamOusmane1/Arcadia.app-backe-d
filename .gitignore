@@ -1,0 +1,29 @@
+# Ignorer le répertoire node_modules
+node_modules/
+
+# Ignorer le fichier de variables d'environnement
+.env
+
+# Ignorer les fichiers de logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignorer les fichiers spécifiques au système d'exploitation
+Thumbs.db  # Windows
+
+# Ignorer les fichiers spécifiques à Vercel (optionnel, généré automatiquement)
+.vercel/
+
+# Ignorer les dossiers de sortie de build (si présents)
+dist/
+build/
+
+# Ignorer les fichiers de verrouillage des paquets (optionnel)
+package-lock.json
+yarn.lock
+
+# Ignorer les paramètres spécifiques aux environnements de développement (IDE)
+.vscode/
