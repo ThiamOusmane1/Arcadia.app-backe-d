@@ -23,7 +23,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'default_jwt_secret'; // Secret pou
 
 // Configuration CORS pour permettre les requêtes du frontend
 app.use(cors({
-    origin: ['http://127.0.0.1:8080', 'https://backarcadia.vercel.app',],
+    origin: ['http://127.0.0.1:8080', 'https://backarcadia.vercel.app'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
     credentials: true
@@ -35,8 +35,6 @@ app.use(express.json());
 
 // Servir les fichiers statiques du répertoire 'front-end' (images, CSS, JS, etc.)
 app.use(express.static(path.join(__dirname, '../front-end')));
-
-// Servir les images depuis le répertoire 'front-end/pictures'
 app.use('/pictures', express.static(path.join(__dirname, '../front-end/pictures')));
 
 // Route de base pour la racine
@@ -44,17 +42,38 @@ app.get('/', (req, res) => {
     res.send('Bienvenue sur l\'API Zoo Arcadia !');
 });
 
-// Route pour obtenir les détails d'un animal spécifique
+// Middleware pour vérifier le token JWT
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Récupère le token
+
+    if (!token) return res.status(401).json({ message: 'Token manquant' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ message: 'Token invalide' });
+        req.user = user; // Stocker les infos du token décrypté (userId, role)
+        next();
+    });
+};
+
+// Middleware d'autorisation des rôles
+const authorizeRole = (...allowedRoles) => {
+    return (req, res, next) => {
+        if (allowedRoles.includes(req.user.role)) {
+            next(); // Passe à la route suivante si le rôle est autorisé
+        } else {
+            res.status(403).json({ message: 'Accès refusé.' });
+        }
+    };
+};
+
+// Routes API
 app.get('/api/animal-details', async (req, res) => {
     const animalId = req.query.id;
-
     try {
         const animal = await Animal.findById(animalId);
-        if (!animal) {
-            return res.status(404).json({ message: 'Animal non trouvé' });
-        }
+        if (!animal) return res.status(404).json({ message: 'Animal non trouvé' });
 
-        // Renvoie les détails de l'animal en JSON
         res.json({
             nom: animal.nom,
             sante: animal.sante,
@@ -71,18 +90,13 @@ app.get('/api/animal-details', async (req, res) => {
 });
 
 app.post('/api/update-counter', async (req, res) => {
-    const { id: animalId } = req.body; // Récupération de l'ID depuis le corps de la requête
+    const { id: animalId } = req.body;
 
-    if (!animalId) {
-        return res.status(400).json({ message: 'Animal ID is required' });
-    }
+    if (!animalId) return res.status(400).json({ message: 'Animal ID is required' });
 
     try {
         const animal = await Animal.findById(animalId);
-
-        if (!animal) {
-            return res.status(404).json({ message: 'Animal non trouvé' });
-        }
+        if (!animal) return res.status(404).json({ message: 'Animal non trouvé' });
 
         animal.consultations = (animal.consultations || 0) + 1;
         await animal.save();
@@ -94,13 +108,10 @@ app.post('/api/update-counter', async (req, res) => {
     }
 });
 
-
-
-// Mise à jour de la route API pour inclure le peuplement de l'habitat
 app.get('/api/vet/animals', async (req, res) => {
     try {
         const animals = await Animal.find()
-            .populate('habitat', 'nom') // Peupler l'habitat avec uniquement le champ nom
+            .populate('habitat', 'nom')
             .select('nom sante poids habitat url nourriture quantite');
         res.status(200).json(animals);
     } catch (error) {
@@ -109,22 +120,13 @@ app.get('/api/vet/animals', async (req, res) => {
     }
 });
 
-// Route API pour mettre à jour un animal
 app.put('/api/vet/animals/:id', async (req, res) => {
+    const { id } = req.params;
+    const { sante, poids, soins } = req.body;
+
     try {
-        const { id } = req.params;
-        const { sante, poids, soins } = req.body;
-
-        // Mise à jour de l'animal
-        const updatedAnimal = await Animal.findByIdAndUpdate(id, {
-            sante: sante,
-            poids: poids,
-            soins: soins
-        }, { new: true }); // Option { new: true } pour retourner l'animal mis à jour
-
-        if (!updatedAnimal) {
-            return res.status(404).json({ message: 'Animal non trouvé' });
-        }
+        const updatedAnimal = await Animal.findByIdAndUpdate(id, { sante, poids, soins }, { new: true });
+        if (!updatedAnimal) return res.status(404).json({ message: 'Animal non trouvé' });
 
         res.status(200).json(updatedAnimal);
     } catch (error) {
@@ -133,9 +135,7 @@ app.put('/api/vet/animals/:id', async (req, res) => {
     }
 });
 
-
-
-//  Routeurs pour les différentes API
+// Routeurs pour les différentes API
 app.use('/api/animals', animalRouter);
 app.use('/api/habitats', habitatRouter);
 app.use('/api/reviews', reviewRouter);
@@ -146,60 +146,19 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // Vérifier si l'utilisateur existe avec l'email donné
         const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
-        if (user) {
-            // Comparer le mot de passe entré avec le mot de passe haché dans la base de données
-            const isPasswordCorrect = await bcrypt.compare(password, user.password);
+        const isPasswordCorrect = await bcrypt.compare(password, user.password);
+        if (!isPasswordCorrect) return res.status(401).json({ message: 'Mot de passe incorrect' });
 
-            if (isPasswordCorrect) {
-                // Si le mot de passe est correct, générer un token JWT
-                const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
-
-                // Répondre avec un message de succès et renvoyer le token
-                return res.status(200).json({ message: 'Connexion réussie', token });
-            } else {
-                return res.status(401).json({ message: 'Mot de passe incorrect' });
-            }
-        } else {
-            return res.status(404).json({ message: 'Utilisateur non trouvé' });
-        }
+        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
+        res.status(200).json({ message: 'Connexion réussie', token });
     } catch (err) {
         console.error('Erreur lors de la connexion:', err);
         return res.status(500).json({ message: 'Erreur serveur' });
     }
 });
-
-// Middleware pour vérifier le token JWT
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Récupère le token
-
-    if (!token) {
-        return res.status(401).json({ message: 'Token manquant' });
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ message: 'Token invalide' });
-        }
-        req.user = user; // Stocker les infos du token décrypté (userId, role)
-        next();
-    });
-};
-
-// Middleware d'autorisation des rôles
-const authorizeRole = (...allowedRoles) => {
-    return (req, res, next) => {
-        const { role } = req.user;
-        if (allowedRoles.includes(role)) {
-            next(); // Passe à la route suivante si le rôle est autorisé
-        } else {
-            res.status(403).json({ message: 'Accès refusé.' });
-        }
-    };
-};
 
 // Route protégée avec authentification JWT
 app.get('/api/protected-route', authenticateToken, (req, res) => {
@@ -212,14 +171,17 @@ app.get('/api/admin-dashboard', authenticateToken, authorizeRole('admin'), (req,
 });
 
 // Démarre le serveur et la connexion à la base de données
+// (Tout le code précédent reste inchangé)
+
 const startServer = async () => {
     try {
         await connectDB();
         console.log('Base de données connectée avec succès !');
 
-        app.listen(port, () => {
-            console.log(`Server running at http://localhost:${port}/`);
-        });
+        // Retire l'appel à app.listen ici
+        // app.listen(port, () => {
+        //     console.log(`Server running at http://localhost:${port}/`);
+        // });
     } catch (err) {
         console.error('Erreur lors du démarrage du serveur:', err);
     }
@@ -227,5 +189,5 @@ const startServer = async () => {
 
 startServer();
 
-
-
+// Ajoute cette ligne pour exporter l'application
+module.exports = app;
